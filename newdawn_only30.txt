@@ -1,0 +1,1516 @@
+from kivy.lang import Builder
+from kivy.uix.screenmanager import Screen, ScreenManager
+from kivymd.app import MDApp
+from kivy.uix.gridlayout import GridLayout
+from kivymd.uix.textfield import MDTextField
+from kivymd.uix.button import MDRaisedButton
+from kivymd.uix.dropdownitem import MDDropDownItem
+from kivymd.uix.menu import MDDropdownMenu
+from kivy.clock import Clock
+import sqlite3
+import bcrypt
+from kivymd.uix.floatlayout import MDFloatLayout
+from kivymd.uix.dialog import MDDialog
+from kivymd.theming import ThemeManager
+from kivymd.uix.label import MDLabel
+from kivymd.uix.snackbar import Snackbar
+from kivy.uix.spinner import Spinner
+from kivy.uix.boxlayout import BoxLayout
+from kivymd.uix.card import MDCard
+from kivy.metrics import dp
+from kivymd.uix.datatables import MDDataTable
+import datetime
+from kivymd.uix.spinner import MDSpinner
+from kivy.uix.scrollview import ScrollView
+from kivy.core.window import Window
+from kivymd.uix.pickers import MDDatePicker
+from kivymd.uix.datatables import MDDataTable
+
+# Define the KV language string for the registration screen
+Builder.load_string("""
+
+<HomeScreen>:
+
+    ScrollView:
+        GridLayout:
+            id: inventory_layout
+            cols: 1
+            spacing: '10dp'
+            padding: '10dp'
+
+
+    BoxLayout:
+        orientation: 'horizontal'
+        spacing: '9dp'
+        padding: '10dp'
+        size_hint_x: None
+        width: '660dp'
+
+        BoxLayout:
+            orientation: 'vertical'
+            spacing: '9dp'
+            padding: '2dp'
+
+            MDRaisedButton:
+                id: add_stock_button
+                text: 'Add Stock'
+                on_release: root.goto_add_stock()
+
+            MDRaisedButton:
+                id: update_quantity_button
+                text: 'Update Qty.'
+                on_release: root.goto_update_quantity()
+
+        BoxLayout:
+            orientation: 'vertical'
+            spacing: '9dp'
+            padding: '2dp'
+
+            MDRaisedButton:
+                id: delete_stock_button
+                text: 'Del Stock'
+                on_release: root.goto_delete_stock()
+
+            MDRaisedButton:
+                id: issued_to_button
+                text: 'Issued To'
+                on_release: root.goto_issued_to()
+
+        BoxLayout:
+            orientation: 'vertical'
+            spacing: '9dp'
+            padding: '2dp'
+
+            MDRaisedButton:
+                id: issued_to_item_button
+                text: 'Issued To Item'
+                on_release: root.goto_issued_to_item()
+
+            MDRaisedButton:
+                id: stock_history_button
+                text: 'Stock History'
+                on_release: root.goto_stock_history()
+        BoxLayout:
+            orientation: 'vertical'
+            spacing: '9dp'
+            padding: '2dp'
+
+            MDRaisedButton:
+                id: history_table_button
+                text: 'History Table'
+                on_release: root.goto_stock_history_table()
+            MDRaisedButton:
+                id: view_inventory_button
+                text: 'View Inventory'
+                on_release: root.goto_view_inventory()
+
+        BoxLayout:
+            orientation: 'vertical'
+            spacing: '9dp'
+            padding: '2dp'
+
+            MDIconButton:
+                icon: "eye"  # Icon for the toggle button
+                pos_hint: {"center_x": 0.5}
+                on_release: root.toggle_buttons_visibility()  # Call a method to toggle button visibility
+
+
+""")
+
+# Connect to the SQLite database (or create one if it doesn't exist)
+conn = sqlite3.connect('user_data.db')
+cursor = conn.cursor()
+
+# Create the 'users' table with the 'role' column
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        role TEXT,
+        username TEXT,
+        password TEXT,
+        email TEXT,
+        phone TEXT
+    )
+''')
+
+# Commit the changes and close the connection
+conn.commit()
+conn.close()
+
+
+class ViewInventoryScreen(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.conn = sqlite3.connect('user_data.db')
+        self.cursor = self.conn.cursor()
+        self.create_table()
+        self.setup_ui()
+
+    def create_table(self):
+        # Create the 'inventory' table if it doesn't exist
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS inventory (
+                id INTEGER PRIMARY KEY,
+                product_name TEXT,
+                quantity INTEGER
+            )
+        ''')
+        self.conn.commit()
+
+    def setup_ui(self):
+        layout = BoxLayout(orientation='vertical', padding=12, spacing=20)
+
+        # Create a button to refresh the table
+        refresh_button = MDRaisedButton(
+            text="Refresh",
+            pos_hint={"center_x": 0.5},
+            on_release=self.refresh_table,
+        )
+        layout.add_widget(refresh_button)
+
+        # Create a button to logout
+        logout_button = MDRaisedButton(
+            text="Logout",
+            pos_hint={"center_x": 0.5},
+            on_release=self.logout,
+        )
+        layout.add_widget(logout_button)
+
+        # Create an MDDataTable to display the stock history data
+        self.data_table = MDDataTable(
+            size_hint=(0.9, 0.7),
+            pos_hint={"center_x": 0.5},
+            use_pagination=False,
+            rows_num=999999,
+            check=True,
+            column_data=[
+                ("Product Name", dp(45)),
+                ("Quantity", dp(30)),
+            ],
+            row_data=self.get_inventory_stock(),
+        )
+        layout.add_widget(self.data_table)
+
+        self.add_widget(layout)
+
+    def get_inventory_stock(self):
+        # Retrieve all stock history items from the 'stock_history' table in reverse order
+        self.cursor.execute('SELECT product_name, quantity FROM inventory')
+        stock_inventory_items = self.cursor.fetchall()
+        return stock_inventory_items
+
+    def update_table(self):
+        # Clear the current table data
+        self.data_table.row_data = []
+
+        # Fetch the latest issued items from the 'stock_history' table
+        stock_inventory_items = self.get_inventory_stock()
+
+        # Update the table with the new data
+        for row in stock_inventory_items:
+            self.data_table.row_data.append(row)
+
+    def refresh_table(self, *args):
+        # Refresh the table to display the latest data
+        self.update_table()
+
+    def on_pre_enter(self, *args):
+        # Update the table when the screen is entered
+        self.update_table()
+
+    def logout(self, *args):
+        # Add logout logic here (clear user session, switch to login screen, etc.)
+        self.manager.current = 'login'  # Redirect to the login screen
+
+
+class LoginScreen(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.conn = sqlite3.connect('user_data.db')
+        self.cursor = self.conn.cursor()
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = BoxLayout(orientation='vertical', spacing=10, padding=10)
+
+        # Create text input fields for login
+        self.username_input = MDTextField(
+            hint_text="Username",
+            multiline=False,
+        )
+        layout.add_widget(self.username_input)
+
+        self.password_input = MDTextField(
+            hint_text="Password",
+            multiline=False,
+            password=True,
+        )
+        layout.add_widget(self.password_input)
+
+        # Create a button to login
+        login_button = MDRaisedButton(
+            text="Login",
+            pos_hint={"center_x": 0.5},
+            on_release=self.login,
+        )
+        layout.add_widget(login_button)
+
+        # Create a back button
+        back_button = MDRaisedButton(
+            text="Register",
+            pos_hint={"center_x": 0.5},
+            on_release=self.goto_register,
+        )
+        layout.add_widget(back_button)
+
+        self.add_widget(layout)
+
+    def login(self, *args):
+        # Get login data from input fields
+        username = self.username_input.text
+        password = self.password_input.text
+
+        if not username or not password:
+            self.show_input_error_dialog()
+            return
+
+        # Fetch the user data from the 'users' table
+        self.cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+        user = self.cursor.fetchone()
+
+        if not user:
+            self.show_invalid_credentials_dialog()
+            return
+
+        hashed_password = user[2]
+
+        if bcrypt.checkpw(password.encode('utf-8'), hashed_password):
+            role = user[0]
+            if role == "User":
+                self.manager.current = 'home'
+            else:  # Viewer
+                self.manager.current = 'view_inventory'
+        else:
+            self.show_invalid_credentials_dialog()
+
+    def show_login_success_dialog(self):
+        dialog = MDDialog(
+            title="Login Successful",
+            text="You have successfully logged in.",
+            buttons=[
+                MDRaisedButton(
+                    text="OK", on_release=lambda instance: dialog.dismiss()
+                )
+            ],
+        )
+        dialog.open()
+        self.manager.current = 'home'
+
+    def show_invalid_credentials_dialog(self):
+        dialog = MDDialog(
+            title="Invalid Credentials",
+            text="The username or password is incorrect.",
+            buttons=[
+                MDRaisedButton(
+                    text="OK", on_release=lambda instance: dialog.dismiss()
+                )
+            ],
+        )
+        dialog.open()
+
+    def show_input_error_dialog(self):
+        dialog = MDDialog(
+            title="Input Error",
+            text="Please provide both a username and password.",
+            buttons=[
+                MDRaisedButton(
+                    text="OK", on_release=lambda instance: dialog.dismiss()
+                )
+            ],
+        )
+        dialog.open()
+
+    def goto_register(self, instance):
+        self.manager.current = 'register'
+
+
+class RegistrationScreen(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.conn = sqlite3.connect('user_data.db')
+        self.cursor = self.conn.cursor()
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = BoxLayout(orientation='vertical', spacing=10, padding=10)
+
+        # Create a Spinner for selecting the role (User/Viewer)
+        self.role_spinner = Spinner(
+            text="Select Role",
+            values=("User", "Viewer"),
+            size_hint=(None, None),
+            size=(300, 44),
+            pos_hint={'center_x': 0.5},
+        )
+        layout.add_widget(self.role_spinner)
+
+        # Create text input fields for other registration details
+        self.username_input = MDTextField(
+            hint_text="Username",
+            multiline=False,
+        )
+        layout.add_widget(self.username_input)
+
+        self.password_input = MDTextField(
+            hint_text="Password",
+            multiline=False,
+            password=True,
+        )
+        layout.add_widget(self.password_input)
+
+        self.email_input = MDTextField(
+            hint_text="Email",
+            multiline=False,
+        )
+        layout.add_widget(self.email_input)
+
+        self.phone_input = MDTextField(
+            hint_text="Phone",
+            multiline=False,
+        )
+        layout.add_widget(self.phone_input)
+
+        # Create a button to register
+        register_button = MDRaisedButton(
+            text="Register",
+            pos_hint={"center_x": 0.5},
+            on_release=self.register,
+        )
+        layout.add_widget(register_button)
+
+        # Create a back button
+        back_button = MDRaisedButton(
+            text="Login",
+            pos_hint={"center_x": 0.5},
+            on_release=self.goto_login,
+        )
+        layout.add_widget(back_button)
+
+        self.add_widget(layout)
+
+    def register(self, *args):
+        # Get registration data from input fields
+        role = self.role_spinner.text
+        username = self.username_input.text
+        password = self.password_input.text
+        email = self.email_input.text
+        phone = self.phone_input.text
+
+        if not role or not username or not password or not email or not phone:
+            self.show_input_error_dialog()
+            return
+
+        # Hash the password
+        hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+
+        # Check for an existing user with the same username or email
+        self.cursor.execute("SELECT * FROM users WHERE username = ? OR email = ?", (username, email))
+        existing_user = self.cursor.fetchone()
+
+        if existing_user:
+            self.show_existing_user_error_dialog()
+            return
+
+        # Insert user data into the 'users' table
+        self.cursor.execute("INSERT INTO users (role, username, password, email, phone) VALUES (?, ?, ?, ?, ?)",
+                            (role, username, hashed_password, email, phone))
+        self.conn.commit()
+        self.conn.close()
+
+        if role == "User":
+            self.manager.current = 'login'
+        else:  # Viewer
+            self.manager.current = 'login'
+
+    def show_existing_user_error_dialog(self):
+        dialog = MDDialog(
+            title="User Exists",
+            text="A user with the same username or email already exists.",
+            buttons=[
+                MDRaisedButton(
+                    text="OK", on_release=lambda instance: dialog.dismiss()
+                )
+            ],
+        )
+        dialog.open()
+
+    def show_input_error_dialog(self):
+        dialog = MDDialog(
+            title="Input Error",
+            text="Please fill in all the required fields.",
+            buttons=[
+                MDRaisedButton(
+                    text="OK", on_release=lambda instance: dialog.dismiss()
+                )
+            ],
+        )
+        dialog.open()
+
+    def goto_login(self, instance):
+        self.manager.current = 'login'
+
+
+class InventoryCard(MDCard):
+    pass
+
+
+class HomeScreen(Screen):
+    def on_pre_enter(self, *args):
+        self.refresh_data()
+
+    def refresh_data(self):
+        # Retrieve and display inventory data
+        conn = sqlite3.connect('user_data.db')
+        c = conn.cursor()
+        c.execute("SELECT id, product_name, quantity FROM inventory")  # Include 'date' in the query
+        data = c.fetchall()
+        conn.close()
+
+        # Clear the existing cards
+        inventory_layout = self.ids.inventory_layout
+        inventory_layout.clear_widgets()
+
+        # Create a GridLayout for the inventory items
+        inventory_grid = GridLayout(cols=1, spacing=80, padding=80, size_hint_y=None)
+        inventory_grid.bind(minimum_height=inventory_grid.setter('height'))
+
+        for item in data:
+            # Create a card for each item
+            card = InventoryCard()
+            card.add_widget(MDLabel(text=f"ID: {item[0]}", theme_text_color="Secondary"))
+            card.add_widget(MDLabel(text=f"Product: {item[1]}", theme_text_color="Primary"))
+            card.add_widget(MDLabel(text=f"Quantity: {item[2]}", theme_text_color="Primary"))
+            # card.add_widget(MDLabel(text=f"Date: {formatted_date}", theme_text_color="Primary"))
+
+            # Add the card to the GridLayout
+            inventory_grid.add_widget(card)
+
+        # Wrap the GridLayout in a ScrollView
+        inventory_scrollview = ScrollView()
+        inventory_scrollview.add_widget(inventory_grid)
+
+        # Add the ScrollView to the layout
+        inventory_layout.add_widget(inventory_scrollview)
+
+    def goto_add_stock(self):
+        self.manager.current = 'add_stock'
+
+    def goto_update_quantity(self):
+        self.manager.current = 'updatequantity'
+
+    def goto_delete_stock(self):
+        self.manager.current = 'deletestock'
+
+    def goto_issued_to(self):
+        self.manager.current = 'issuedto'  # Switch to the 'IssuedTo' page
+
+    def goto_issued_to_item(self):
+        self.manager.current = 'issuedtoitem'
+
+    def goto_stock_history(self):
+        self.manager.current = 'stockhistory'
+
+    def goto_stock_history_table(self):
+        self.manager.current = 'historytable'
+
+    def goto_view_inventory(self):
+        self.manager.current = 'view_inventory'
+
+    buttons_visible = True  # Initialize the visibility state
+
+    def toggle_buttons_visibility(self):
+        # Toggle the visibility state
+        self.buttons_visible = not self.buttons_visible
+
+        # Get references to the buttons
+        add_stock_button = self.ids.add_stock_button
+        update_quantity_button = self.ids.update_quantity_button
+        delete_stock_button = self.ids.delete_stock_button
+        issued_to_button = self.ids.issued_to_button
+        issued_to_item_button = self.ids.issued_to_item_button
+        stock_history_button = self.ids.stock_history_button
+        history_table_button = self.ids.history_table_button
+        view_inventory_button = self.ids.view_inventory_button
+
+        # Set the visibility of the buttons based on the state
+        buttons = [add_stock_button, update_quantity_button, delete_stock_button, issued_to_button,
+                   issued_to_item_button, stock_history_button, history_table_button, view_inventory_button]
+
+        for button in buttons:
+            if self.buttons_visible:
+                button.opacity = 1  # Make visible
+                button.disabled = False  # Enable button interactions
+            else:
+                button.opacity = 0  # Make invisible
+                button.disabled = True  # Disable button interactions
+
+
+product_names = [
+    "Oraimo Charger",
+    "Type C to C Charger",
+    "Type C to USB Charger",
+    "Type C Explore",
+    "Iphone X charger",
+    "Iphone USB",
+    "Shplus Charger",
+    "Infinix CA charger",
+    "Solar Fan New",
+    "MIFI",
+    "Smart 7 plus 64-4+3GB",
+    "Solar Orbit fan",
+    "Solar Adapter AC",
+    "Hynet CAT4",
+    "itel 5606",
+    "Redmi A2+ 32+2",
+    "A02",
+    "MTN Hynetflex",
+    "OALE 2160",
+    "MTN PPSK",
+    "Redmi A2+ 64+3",
+    "solar bulb",
+    "MTN Router Deskphone",
+    "MTN Smartphone A23",
+    "MTN Smartphone A23",
+    "A07",
+    "Solar bulb",
+    "Solar Bulb LED",
+    "Solar Inverter",
+    "Itel 2163",
+    "Lumos Fan",
+    "Solar TV Cable",
+    "Solar Bulb LED",
+    "solar ware",
+    "Tecno T101",
+    "Redmi 12C 32+3",
+    "Tecno T352",
+    "ITEL 5636",
+    "Vital Phone",
+    "TECNO T101",
+    "Z Laptop Charger",
+    "Z Lufen Deskphone",
+    "Z Oale Apex 3",
+    "DC Solar Fan",
+    "TECNO T101",
+    "M1",
+    "Redmi 12C 128+4",
+    "Extra bass Air peace",
+    "Smart 7plus 64+2+2",
+    "Sam 1 Airpeace",
+    "HOT 20i 64-4GB",
+    "Y38 Air peace",
+    "H-mobile 5260",
+    "PPWB",
+    "D-Light",
+]
+
+
+class AddStockScreen(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.conn = sqlite3.connect('user_data.db')
+        self.cursor = self.conn.cursor()
+        self.create_table()
+        self.product_names = self.get_all_product_names()  # Initialize with all product names
+        self.setup_ui()
+
+    def create_table(self):
+        # Create the 'inventory' table if it doesn't exist
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS inventory (
+                id INTEGER PRIMARY KEY,
+                product_name TEXT,
+                quantity INTEGER
+            )
+        ''')
+        self.conn.commit()
+
+    def setup_ui(self):
+        layout = BoxLayout(orientation='vertical', padding=12, spacing=20)
+
+        # Create a dropdown menu for Product Name
+        self.product_name_spinner = Spinner(
+            text="Select Product Name",
+            values=product_names,  # Initialize with existing product names
+            size_hint=(None, None),
+            size=(300, 44),
+            pos_hint={'center_x': 0.5},
+        )
+        self.product_name_spinner.bind(on_text=self.update_product_name_text)
+        layout.add_widget(self.product_name_spinner)
+
+        # Create a text field for Quantity
+        self.quantity_input = MDTextField(
+            hint_text="Quantity",
+            helper_text="Enter Quantity",
+            helper_text_mode="on_focus",
+        )
+        layout.add_widget(self.quantity_input)
+
+        # Create a button to submit data
+        submit_button = MDRaisedButton(
+            text="Add Stock",
+            pos_hint={"center_x": 0.5},
+            on_release=self.insert_data,
+        )
+        layout.add_widget(submit_button)
+
+        # Create a back button
+        back_button = MDRaisedButton(
+            text="Back to Home",
+            pos_hint={"center_x": 0.5},
+            on_release=self.goto_home,
+        )
+        layout.add_widget(back_button)
+
+        self.add_widget(layout)
+
+    def get_all_product_names(self):
+        # Retrieve the list of all product names from the 'inventory' table
+        self.cursor.execute('SELECT DISTINCT product_name FROM inventory')
+        product_names = [item[0] for item in self.cursor.fetchall()]
+        return product_names
+
+    def update_product_name_text(self, instance, text):
+        # Update the text field with the selected product name
+        self.product_name_spinner.text = text
+
+    def insert_data(self, *args):
+        # Get data from input fields
+        product_name = self.product_name_spinner.text
+        quantity = self.quantity_input.text
+
+        # Check if any of the required fields is empty
+        if not product_name or not quantity:
+            Snackbar(text="Please fill in all required fields.").open()
+            return
+
+        # Check if a record with the same product name already exists in the 'inventory' table
+        self.cursor.execute('SELECT COUNT(*) FROM inventory WHERE product_name = ?', (product_name,))
+        existing_record_count = self.cursor.fetchone()[0]
+
+        if existing_record_count > 0:
+            # If a record with the same product name exists, display a Snackbar message
+            Snackbar(text="Product already exists in inventory.").open()
+        else:
+            # If no record exists, insert a new record
+            self.cursor.execute('INSERT INTO inventory (product_name, quantity) VALUES (?, ?)',
+                                (product_name, quantity))
+            self.conn.commit()
+
+            # Provide feedback to the user, e.g., clear input fields
+            self.product_name_spinner.text = "Select Product Name"
+            self.quantity_input.text = ""
+
+            # Display a Snackbar notification
+            Snackbar(text="Data saved successfully!").open()
+
+    def goto_home(self, *args):
+        self.manager.current = 'home'
+
+
+class UpdateQuantityScreen(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.conn = sqlite3.connect('user_data.db')
+        self.cursor = self.conn.cursor()
+        self.create_table()
+        self.setup_ui()
+
+    def create_table(self):
+        # Create the 'inventory' table if it doesn't exist
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS inventory (
+                id INTEGER PRIMARY KEY,
+                product_name TEXT,
+                quantity INTEGER,
+                date TEXT
+            )
+        ''')
+        self.conn.commit()
+
+    def setup_ui(self):
+        layout = BoxLayout(orientation='vertical', padding=12, spacing=20)
+
+        # Create a dropdown menu for Product Name
+        self.product_name_spinner = Spinner(
+            text="Select Product Name",  # Use hint instead of hint_text
+            size_hint=(None, None),
+            size=(300, 44),
+            pos_hint={'center_x': 0.5},
+        )
+        self.populate_product_name_spinner()  # Populate the spinner with product names
+        layout.add_widget(self.product_name_spinner)
+
+        # Create a text field for Quantity
+        self.quantity_input = MDTextField(
+            hint_text="Quantity",
+            helper_text="Enter New Quantity",
+            helper_text_mode="on_focus",
+        )
+        layout.add_widget(self.quantity_input)
+
+        # Create a button to update quantity
+        update_button = MDRaisedButton(
+            text="Update Quantity",
+            pos_hint={"center_x": 0.5},
+            on_release=self.update_quantity,
+        )
+        layout.add_widget(update_button)
+
+        # Create a button to go back to Home
+        back_button = MDRaisedButton(
+            text="Back to Home",
+            pos_hint={"center_x": 0.5},
+            on_release=self.goto_home,
+        )
+        layout.add_widget(back_button)
+
+        self.add_widget(layout)
+
+    def populate_product_name_spinner(self):
+        # Retrieve the list of product names from the 'inventory' table
+        self.cursor.execute('SELECT DISTINCT product_name FROM inventory')
+        product_names = [item[0] for item in self.cursor.fetchall()]
+
+        # Populate the spinner with product names and refresh the dropdown list
+        self.product_name_spinner.values = product_names
+        self.product_name_spinner.text = "Select Product Name"  # Reset the selected value
+
+    def refresh_product_names(self):
+        # Retrieve the list of product names from the 'inventory' table
+        self.cursor.execute('SELECT DISTINCT product_name FROM inventory')
+        product_names = [item[0] for item in self.cursor.fetchall()]
+        self.product_name_spinner.values = product_names
+
+    def update_quantity(self, *args):
+        # Get data from input fields
+        product_name = self.product_name_spinner.text
+        new_quantity_str = self.quantity_input.text
+
+        # Check if both product name and new quantity are provided
+        if not product_name or not new_quantity_str:
+            Snackbar(text="Please select a product name and enter a new quantity.").open()
+            return
+
+        try:
+            # Convert new quantity to an integer
+            new_quantity = int(new_quantity_str)
+        except ValueError:
+            Snackbar(text="Please enter a valid new quantity as a positive integer.").open()
+            return
+
+        # Retrieve the old quantity from the 'inventory' table
+        self.cursor.execute('''
+            SELECT quantity
+            FROM inventory
+            WHERE product_name = ?
+        ''', (product_name,))
+        old_quantity = self.cursor.fetchone()
+
+        if old_quantity is not None:
+            old_quantity = old_quantity[0]  # Extract the old quantity value
+
+            # Calculate the new total quantity
+            total_quantity = old_quantity + new_quantity
+
+            # Update the quantity in the 'inventory' table
+            self.cursor.execute('''
+                UPDATE inventory
+                SET quantity = ?
+                WHERE product_name = ?
+            ''', (total_quantity, product_name))
+            self.conn.commit()
+
+            # Provide feedback to the user, e.g., clear input fields
+            self.product_name_spinner.text = ""
+            self.quantity_input.text = ""
+
+            # Display a Snackbar notification
+            Snackbar(text="Quantity updated successfully!").open()
+        else:
+            Snackbar(text=f"Product '{product_name}' not found in inventory.").open()
+
+    def goto_home(self, *args):
+        self.manager.current = 'home'
+
+    def on_pre_enter(self, *args):
+        # Refresh product names when the screen is displayed
+        self.refresh_product_names()
+
+
+class DeleteStockScreen(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.conn = sqlite3.connect('user_data.db')
+        self.cursor = self.conn.cursor()
+        self.create_table()
+        self.setup_ui()
+
+    def create_table(self):
+        # Create the 'inventory' table if it doesn't exist
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS inventory (
+                id INTEGER PRIMARY KEY,
+                product_name TEXT,
+                quantity INTEGER,
+                date TEXT
+            )
+        ''')
+        self.conn.commit()
+
+    def setup_ui(self):
+        layout = BoxLayout(orientation='vertical', padding=12, spacing=20)
+
+        # Create a dropdown menu for Product Name
+        self.product_name_spinner = Spinner(
+            text="Select Product Name",  # Use hint instead of hint_text
+            size_hint=(None, None),
+            size=(300, 44),
+            pos_hint={'center_x': 0.5},
+        )
+        self.populate_product_name_spinner()  # Populate the spinner with product names
+        layout.add_widget(self.product_name_spinner)
+
+        # Create a button to delete the selected stock
+        delete_button = MDRaisedButton(
+            text="Delete Stock",
+            pos_hint={"center_x": 0.5},
+            on_release=self.delete_stock,
+        )
+        layout.add_widget(delete_button)
+
+        # Create a button to go back to Home
+        back_button = MDRaisedButton(
+            text="Back to Home",
+            pos_hint={"center_x": 0.5},
+            on_release=self.goto_home,
+        )
+        layout.add_widget(back_button)
+
+        self.add_widget(layout)
+
+    def populate_product_name_spinner(self):
+        # Retrieve the list of product names from the 'inventory' table
+        self.cursor.execute('SELECT DISTINCT product_name FROM inventory')
+        product_names = [item[0] for item in self.cursor.fetchall()]
+
+        # Populate the spinner with product names and refresh the dropdown list
+        self.product_name_spinner.values = product_names
+        self.product_name_spinner.text = "Select Product Name"  # Reset the selected value
+        print("Product names in dropdown:", product_names)
+
+    def refresh_product_names(self):
+        # Retrieve the list of product names from the 'inventory' table
+        self.cursor.execute('SELECT DISTINCT product_name FROM inventory')
+        product_names = [item[0] for item in self.cursor.fetchall()]
+        self.product_name_spinner.values = product_names
+
+    def delete_stock(self, *args):
+        # Get the selected product name from the dropdown
+        product_name = self.product_name_spinner.text
+
+        if product_name == "Select Product Name":
+            Snackbar(text="Please select a product name to delete.").open()
+            return
+
+        # Delete the selected stock from the 'inventory' table
+        self.cursor.execute('''
+            DELETE FROM inventory
+            WHERE product_name = ?
+        ''', (product_name,))
+        self.conn.commit()
+        # Provide feedback to the user, e.g., reset the dropdown
+        self.product_name_spinner.text = "Select Product Name"
+
+        # Display a Snackbar notification
+        Snackbar(text="Stock deleted successfully!").open()
+
+    def goto_home(self, *args):
+        self.manager.current = 'home'
+
+    def on_pre_enter(self, *args):
+        # Refresh product names when the screen is displayed
+        self.refresh_product_names()
+
+    def goto_issued_to(self):
+        self.manager.current = 'issuedto'  # Switch to the 'IssuedTo' page
+
+
+class IssuedToScreen(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.setup_ui()
+        self.conn = sqlite3.connect('user_data.db')
+        self.cursor = self.conn.cursor()
+        self.create_issuedto_table()
+        self.populate_product_name_spinner()  # Populate the product name spinner
+
+    def create_issuedto_table(self):
+        # Create the 'issuedto' table if it doesn't exist
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS issuedto (
+                id INTEGER PRIMARY KEY,
+                ccr_name TEXT,
+                product_name TEXT,
+                quantity INTEGER,
+                date TEXT
+            )
+        ''')
+        self.conn.commit()
+
+    def setup_ui(self):
+        layout = BoxLayout(orientation='vertical', padding=12, spacing=20)
+
+        # Create a text field for CCR Name
+        self.ccr_name_input = MDTextField(
+            hint_text="CCR Name",
+            helper_text="Enter CCR Name",
+            helper_text_mode="on_focus",
+        )
+        layout.add_widget(self.ccr_name_input)
+
+        # Create a spinner for Product Name
+        self.product_name_spinner = Spinner(
+            text="Select Product Name",  # Initially empty
+            values=[],  # Initially empty
+            size_hint=(None, None),
+            size=(300, 44),
+            pos_hint={'center_x': 0.5},
+        )
+        layout.add_widget(self.product_name_spinner)
+
+        # Create a text field for Quantity
+        self.quantity_input = MDTextField(
+            hint_text="Quantity",
+            helper_text="Enter Quantity",
+            helper_text_mode="on_focus",
+        )
+        layout.add_widget(self.quantity_input)
+
+        # Create a button to open the date picker
+        date_picker_button = MDRaisedButton(
+            text="Open date picker",
+            pos_hint={'center_x': .5, 'center_y': .6},
+            on_release=self.show_date_picker
+        )
+        layout.add_widget(date_picker_button)
+
+        # Create a text field for Date
+        self.date_input = MDTextField(
+            hint_text="Date",
+            helper_text="Select Date",
+            helper_text_mode="on_focus",
+            readonly=True
+        )
+        layout.add_widget(self.date_input)
+
+        # Create a button to submit issued items
+        submit_button = MDRaisedButton(
+            text="Submit Issued Items",
+            pos_hint={"center_x": 0.5},
+            on_release=self.submit_issued_items,
+        )
+        layout.add_widget(submit_button)
+
+        # Create a button to go back to Home
+        back_button = MDRaisedButton(
+            text="Back to Home",
+            pos_hint={"center_x": 0.5},
+            on_release=self.goto_home,
+        )
+        layout.add_widget(back_button)
+
+        self.add_widget(layout)
+
+    def populate_product_name_spinner(self):
+        # Retrieve the list of product names from the 'inventory' table
+        self.cursor.execute('SELECT DISTINCT product_name FROM inventory')
+        product_names = [item[0] for item in self.cursor.fetchall()]
+
+        # Populate the spinner with product names
+        self.product_name_spinner.values = product_names
+
+    def submit_issued_items(self, *args):
+        # Get data from input fields
+        ccr_name = self.ccr_name_input.text
+        product_name = self.product_name_spinner.text  # Retrieve the selected product name from the Spinner
+        quantity_str = self.quantity_input.text
+        date = self.date_input.text
+
+        # Check if all required fields are provided
+        if not ccr_name or not product_name or not quantity_str or not date:
+            Snackbar(text="Please fill in all fields.").open()
+            return
+
+        try:
+            # Convert quantity to an integer
+            quantity = int(quantity_str)
+
+            # Check if the selected product exists in the inventory
+            self.cursor.execute('SELECT quantity FROM inventory WHERE product_name = ?', (product_name,))
+            result = self.cursor.fetchone()
+
+            if result is not None:
+                available_quantity = result[0]
+
+                # Check if there is enough quantity available for issuing
+                if quantity > available_quantity:
+                    Snackbar(text=f"Insufficient quantity available for '{product_name}'.").open()
+                    return
+
+                # Subtract the issued quantity from the available quantity
+                new_quantity = available_quantity - quantity
+
+                # Update the inventory with the new quantity
+                self.cursor.execute('UPDATE inventory SET quantity = ? WHERE product_name = ?',
+                                    (new_quantity, product_name))
+                self.conn.commit()
+
+                # Insert the issued item into the 'issuedto' table
+                self.cursor.execute('INSERT INTO issuedto (ccr_name, product_name, quantity, date) VALUES (?, ?, ?, ?)',
+                                    (ccr_name, product_name, quantity, date))
+                self.conn.commit()
+
+                # Provide feedback to the user, e.g., clear input fields
+                self.ccr_name_input.text = ""
+                self.product_name_spinner.text = ""  # Reset the selected product name
+                self.quantity_input.text = ""
+                self.date_input.text = ""
+
+                # Display a Snackbar notification or other feedback
+                Snackbar(text="Issued items submitted successfully!").open()
+            else:
+                Snackbar(text=f"Product '{product_name}' not found in inventory.").open()
+        except ValueError:
+            Snackbar(text="Please enter a valid quantity as a positive integer.").open()
+
+    def goto_home(self, *args):
+        self.manager.current = 'home'
+
+    def show_date_picker(self, instance):
+        date_dialog = MDDatePicker()
+        date_dialog.bind(on_save=self.on_save, on_cancel=self.on_cancel)
+        date_dialog.open()
+
+    def on_save(self, instance, value, date_range):
+        self.date_input.text = value.strftime('%Y-%m-%d')
+
+    def on_cancel(self, instance, value):
+        pass
+
+
+class IssuedToItemsScreen(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.conn = sqlite3.connect('user_data.db')
+        self.cursor = self.conn.cursor()
+        self.create_table()
+        self.setup_ui()
+
+    def create_table(self):
+        # Create the 'issuedto' table if it doesn't exist
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS issuedto (
+                id INTEGER PRIMARY KEY,
+                ccr_name TEXT,
+                product_name TEXT,
+                quantity INTEGER,
+                date TEXT
+            )
+        ''')
+        self.conn.commit()
+
+    def setup_ui(self):
+        layout = BoxLayout(orientation='vertical', padding=12, spacing=20)
+
+        # Create a button to go back to Home
+        back_button = MDRaisedButton(
+            text="Back to Home",
+            pos_hint={"center_x": 0.5},
+            on_release=self.goto_home,
+        )
+        layout.add_widget(back_button)
+
+        # Create a button to refresh the table
+        refresh_button = MDRaisedButton(
+            text="Refresh",
+            pos_hint={"center_x": 0.5},
+            on_release=self.refresh_table,
+        )
+        layout.add_widget(refresh_button)
+
+        # Create a table to display the issued items
+        self.data_table = MDDataTable(
+            size_hint=(0.9, 0.7),
+            use_pagination=False,  # Disable pagination
+            rows_num=999999,  # Set a high number to display all rows
+            column_data=[
+                ("CCR Name", dp(30)),
+                ("Product Name", dp(30)),
+                ("Quantity", dp(20)),
+                ("Date", dp(30)),
+            ],
+            row_data=self.get_issued_items(),
+        )
+        layout.add_widget(self.data_table)
+
+        self.add_widget(layout)
+
+    def get_issued_items(self):
+        # Retrieve all stock history items from the 'issuedto' table in reverse order
+        self.cursor.execute('SELECT ccr_name, product_name, quantity, date FROM issuedto ORDER BY id DESC')
+        issued_items = self.cursor.fetchall()
+        return issued_items
+
+    def update_table(self):
+        # Clear the current table data
+        self.data_table.row_data = []
+
+        # Fetch the latest issued items from the 'issuedto' table
+        issued_items = self.get_issued_items()
+
+        # Update the table with the new data
+        for row in issued_items:
+            self.data_table.row_data.append(row)
+
+    def refresh_table(self, *args):
+        # Refresh the table to display the latest data
+        self.update_table()
+
+    def goto_home(self, *args):
+        self.manager.current = 'home'
+
+    def on_pre_enter(self, *args):
+        # Update the table when the screen is entered
+        self.update_table()
+
+
+class StockHistoryScreen(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.conn = sqlite3.connect('user_data.db')
+        self.cursor = self.conn.cursor()
+        self.create_table()
+        self.setup_ui()
+
+    def create_table(self):
+        # Create the 'stock_history' table if it doesn't exist
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS stock_history (
+                id INTEGER PRIMARY KEY,
+                product_name TEXT,
+                serial_no TEXT,
+                quantity INTEGER,
+                date TEXT
+            )
+        ''')
+        self.conn.commit()
+
+    def setup_ui(self):
+        layout = BoxLayout(orientation='vertical', padding=12, spacing=20)
+
+        # Create a dropdown menu for Product Name
+        self.product_name_spinner = Spinner(
+            text="Select Product Name",
+            values=MDApp.get_running_app().product_names,  # Access product_names from the app
+            size_hint=(None, None),
+            size=(300, 44),
+            pos_hint={'center_x': 0.5},
+        )
+        self.product_name_spinner.bind(on_text=self.update_product_name_text)
+        layout.add_widget(self.product_name_spinner)
+
+        # Create a text field for serial number
+        self.serial_no_input = MDTextField(
+            hint_text="Serial Number",
+            helper_text="Enter Serial Number",
+            helper_text_mode="on_focus",
+        )
+        layout.add_widget(self.serial_no_input)
+
+        # Create a text field for Quantity
+        self.quantity_input = MDTextField(
+            hint_text="Quantity",
+            helper_text="Enter Quantity",
+            helper_text_mode="on_focus",
+        )
+        layout.add_widget(self.quantity_input)
+
+        # Create a button to open the date picker
+        date_picker_button = MDRaisedButton(
+            text="Open date picker",
+            pos_hint={'center_x': .5, 'center_y': .6},
+            on_release=self.show_date_picker
+        )
+        layout.add_widget(date_picker_button)
+
+        # Create a text field for the selected date
+        self.date_input = MDTextField(
+            hint_text="Date",
+            helper_text="Select Date",
+            helper_text_mode="on_focus",
+            readonly=True  # Make it readonly to prevent manual input
+        )
+        layout.add_widget(self.date_input)
+
+        # Create a button to submit data
+        submit_button = MDRaisedButton(
+            text="Add Stock",
+            pos_hint={"center_x": 0.5},
+            on_release=self.insert_data,
+        )
+        layout.add_widget(submit_button)
+
+        # Create a back button
+        back_button = MDRaisedButton(
+            text="Back to Home",
+            pos_hint={"center_x": 0.5},
+            on_release=self.goto_home,
+        )
+        layout.add_widget(back_button)
+
+        self.add_widget(layout)
+
+    def update_product_name_text(self, instance, text):
+        # Update the text field with the selected product name
+        self.product_name_spinner.text = text
+
+    def insert_data(self, *args):
+        # Get data from input fields
+        product_name = self.product_name_spinner.text
+        serial_no = self.serial_no_input.text
+        quantity = self.quantity_input.text
+        date = self.date_input.text
+
+        # Check if any of the required fields is empty
+        if not product_name or not serial_no or not quantity or not date:
+            Snackbar(text="Please fill in all required fields.").open()
+            return
+
+        # Convert date string to a proper date format
+        try:
+            date = datetime.datetime.strptime(date, "%Y-%m-%d")
+            date = date.strftime("%Y-%m-%d")
+        except ValueError:
+            date = None
+
+        # Insert data into the 'stock_history' table
+        self.cursor.execute('''
+            INSERT INTO stock_history (product_name, serial_no, quantity, date)
+            VALUES (?, ?, ?, ?)
+        ''', (product_name, serial_no, quantity, date))
+        self.conn.commit()
+
+        # Provide feedback to the user, e.g., clear input fields
+        self.product_name_spinner.text = "Select Product Name"
+        self.serial_no_input.text = ""
+        self.quantity_input.text = ""
+        self.date_input.text = ""
+
+        # Display a Snackbar notification
+        Snackbar(text="Data saved successfully!").open()
+
+    def goto_home(self, *args):
+        self.manager.current = 'home'
+
+    def show_date_picker(self, instance):
+        date_dialog = MDDatePicker()
+        date_dialog.bind(on_save=self.on_save, on_cancel=self.on_cancel)
+        date_dialog.open()
+
+    def on_save(self, instance, value, date_range):
+        self.date_input.text = value.strftime('%Y-%m-%d')
+
+    def on_cancel(self, instance, value):
+        pass
+
+
+class StockHistoryTableScreen(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.conn = sqlite3.connect('user_data.db')
+        self.cursor = self.conn.cursor()
+        self.create_table()
+        self.setup_ui()
+
+    def create_table(self):
+        # Create the 'stock_history' table if it doesn't exist
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS stock_history (
+                id INTEGER PRIMARY KEY,
+                product_name TEXT,
+                serial_no TEXT,
+                quantity INTEGER,
+                date TEXT
+            )
+        ''')
+        self.conn.commit()
+
+    def setup_ui(self):
+        layout = BoxLayout(orientation='vertical', padding=12, spacing=20)
+
+        # Create a button to go back to Home
+        back_button = MDRaisedButton(
+            text="Back to Home",
+            pos_hint={"center_x": 0.5},
+            on_release=self.goto_home,
+        )
+        layout.add_widget(back_button)
+
+        # Create a button to refresh the table
+        refresh_button = MDRaisedButton(
+            text="Refresh",
+            pos_hint={"center_x": 0.5},
+            on_release=self.refresh_table,
+        )
+        layout.add_widget(refresh_button)
+
+        # Create an MDDataTable to display the stock history data
+        self.data_table = MDDataTable(
+            size_hint=(0.9, 0.7),
+            pos_hint={"center_x": 0.5},
+            use_pagination=False,
+            rows_num=999999,
+            check=True,
+            column_data=[
+                ("Product Name", dp(45)),
+                ("Serial No.", dp(30)),
+                ("Quantity", dp(30)),
+                ("Date", dp(30)),
+            ],
+            row_data=self.get_history_stock(),
+        )
+        layout.add_widget(self.data_table)
+
+        self.add_widget(layout)
+
+    def get_history_stock(self):
+        # Retrieve all stock history items from the 'stock_history' table in reverse order
+        self.cursor.execute('SELECT product_name, serial_no, quantity, date FROM stock_history ORDER BY id DESC')
+        stock_history_items = self.cursor.fetchall()
+        return stock_history_items
+
+    def update_table(self):
+        # Clear the current table data
+        self.data_table.row_data = []
+
+        # Fetch the latest issued items from the 'stock_history' table
+        stock_history_items = self.get_history_stock()
+
+        # Update the table with the new data
+        for row in stock_history_items:
+            self.data_table.row_data.append(row)
+
+    def refresh_table(self, *args):
+        # Refresh the table to display the latest data
+        self.update_table()
+
+    def goto_home(self, *args):
+        self.manager.current = 'home'
+
+    def on_pre_enter(self, *args):
+        # Update the table when the screen is entered
+        self.update_table()
+
+
+class NewDawnInventoryApp(MDApp):
+    def build(self):
+        self.product_names = ["Oraimo Charger",
+                              "Type C to C Charger",
+                              "Type C to USB Charger",
+                              "Type C Explore",
+                              "Iphone X charger",
+                              "Iphone USB",
+                              "Shplus Charger",
+                              "Infinix CA charger",
+                              "Solar Fan New",
+                              "MIFI",
+                              "Smart 7 plus 64-4+3GB",
+                              "Solar Orbit fan",
+                              "Solar Adapter AC",
+                              "Hynet CAT4",
+                              "itel 5606",
+                              "Redmi A2+ 32+2",
+                              "A02",
+                              "MTN Hynetflex",
+                              "OALE 2160",
+                              "MTN PPSK",
+                              "Redmi A2+ 64+3",
+                              "solar bulb",
+                              "MTN Router Deskphone",
+                              "MTN Smartphone A23",
+                              "MTN Smartphone A23",
+                              "A07",
+                              "Solar bulb",
+                              "Solar Bulb LED",
+                              "Solar Inverter",
+                              "Itel 2163",
+                              "Lumos Fan",
+                              "Solar TV Cable",
+                              "Solar Bulb LED",
+                              "solar ware",
+                              "Tecno T101",
+                              "Redmi 12C 32+3",
+                              "Tecno T352",
+                              "ITEL 5636",
+                              "Vital Phone",
+                              "TECNO T101",
+                              "Z Laptop Charger",
+                              "Z Lufen Deskphone",
+                              "Z Oale Apex 3",
+                              "DC Solar Fan",
+                              "TECNO T101",
+                              "M1",
+                              "Redmi 12C 128+4",
+                              "Extra bass Air peace",
+                              "Smart 7plus 64+2+2",
+                              "Sam 1 Airpeace",
+                              "HOT 20i 64-4GB",
+                              "Y38 Air peace",
+                              "H-mobile 5260",
+                              "PPWB",
+                              "D-Light", ]
+        self.theme_cls.theme_style = "Dark"
+        self.theme_cls.primary_palette = "Yellow"
+        self.theme_cls.accent_palette = "Pink"
+        self.conn = sqlite3.connect('user_data.db')
+        self.create_table()
+
+        theme_cls = ThemeManager()
+
+        # self.theme_cls.theme_style = "Dark"
+        sm = ScreenManager()
+        sm.add_widget(RegistrationScreen(name='register'))
+        sm.add_widget(LoginScreen(name='login'))
+        sm.add_widget(HomeScreen(name='home'))
+        sm.add_widget(AddStockScreen(name='add_stock'))
+        sm.add_widget(UpdateQuantityScreen(name='updatequantity'))
+        sm.add_widget(DeleteStockScreen(name='deletestock'))
+        sm.add_widget(IssuedToScreen(name='issuedto'))
+        sm.add_widget(IssuedToItemsScreen(name='issuedtoitem'))
+        sm.add_widget(StockHistoryScreen(name='stockhistory'))
+        sm.add_widget(StockHistoryTableScreen(name='historytable'))
+        sm.add_widget(ViewInventoryScreen(name='view_inventory'))
+        return sm
+
+    def create_table(self):
+        c = self.conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS users
+                     (username TEXT, password TEXT, email TEXT, phone TEXT)''')
+        self.conn.commit()
+
+    def on_stop(self):
+        self.conn.close()
+
+
+if __name__ == '__main__':
+    NewDawnInventoryApp().run()
